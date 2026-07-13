@@ -12,14 +12,14 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
     SLUG = "producturl"
     TITLE = "Product URL Generator"
     DESCRIPTION = "Automatically generates a public product page URL for parts"
-    VERSION = "0.2.0"
+    VERSION = "0.2.1"
     AUTHOR = "Fred Corp."
 
     SETTINGS = {
         "BASE_URL": {
             "name": "Base URL",
             "description": "Base URL prefix for generated product links (include trailing slash)",
-            "default": "https://product.fredcorp.cc/",
+            "default": "https://your.domain.com/",
         },
         "ID_SOURCE": {
             "name": "ID Source",
