@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inventree-product-url"
+version = "0.1.0"
+description = "InvenTree plugin to auto-generate product URLs for parts"
+requires-python = ">=3.9"
+
+[project.entry-points."inventree_plugins"]
+ProductUrlPlugin = "inventree_product_url:ProductUrlPlugin"
