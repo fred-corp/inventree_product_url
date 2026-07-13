@@ -1,22 +1,25 @@
+from django.http import HttpResponse
+from django.urls import path
+
 from plugin import InvenTreePlugin
-from plugin.mixins import EventMixin, SettingsMixin
+from plugin.mixins import EventMixin, SettingsMixin, UrlsMixin
 
 
-class ProductUrlPlugin(EventMixin, SettingsMixin, InvenTreePlugin):
-    """Auto-populates a Part's external link with a public product URL on creation."""
+class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
+    """Auto-populates a Part's external link with a public product URL."""
 
     NAME = "ProductUrl"
     SLUG = "producturl"
     TITLE = "Product URL Generator"
-    DESCRIPTION = "Automatically generates a public product page URL for new parts"
-    VERSION = "0.1.0"
+    DESCRIPTION = "Automatically generates a public product page URL for parts"
+    VERSION = "0.2.0"
     AUTHOR = "Fred Corp."
 
     SETTINGS = {
         "BASE_URL": {
             "name": "Base URL",
             "description": "Base URL prefix for generated product links (include trailing slash)",
-            "default": "https://your.domain.com/",
+            "default": "https://product.fredcorp.cc/",
         },
         "ID_SOURCE": {
             "name": "ID Source",
@@ -36,19 +39,22 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, InvenTreePlugin):
             "validator": bool,
             "default": False,
         },
+        "SALEABLE_ONLY": {
+            "name": "Saleable Parts Only",
+            "description": "Only generate product URLs for parts marked as saleable",
+            "validator": bool,
+            "default": False,
+        },
     }
 
-    def process_event(self, event, *args, **kwargs):
-        if event != "part_part.created":
-            return
+    # --- shared helpers ---
 
-        from part.models import Part
+    def _should_process(self, part):
+        if self.get_setting("SALEABLE_ONLY") and not part.salable:
+            return False
+        return True
 
-        part = Part.objects.get(pk=kwargs["id"])
-
-        if part.link and not self.get_setting("OVERWRITE_EXISTING"):
-            return
-
+    def _build_link(self, part):
         base_url = self.get_setting("BASE_URL")
         source = self.get_setting("ID_SOURCE")
 
@@ -58,5 +64,53 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, InvenTreePlugin):
             padding = self.get_setting("ID_PADDING")
             identifier = str(part.pk).zfill(padding)
 
-        part.link = f"{base_url}{identifier}"
+        return f"{base_url}{identifier}"
+
+    # --- event hook (new parts) ---
+
+    def process_event(self, event, *args, **kwargs):
+        if event != "part_part.created":
+            return
+
+        from part.models import Part
+
+        part = Part.objects.get(pk=kwargs["id"])
+
+        if not self._should_process(part):
+            return
+
+        if part.link and not self.get_setting("OVERWRITE_EXISTING"):
+            return
+
+        part.link = self._build_link(part)
         part.save()
+
+    # --- backfill endpoint (existing parts) ---
+
+    def backfill_view(self, request):
+        if not request.user.is_staff:
+            return HttpResponse("Forbidden - staff access required", status=403)
+
+        from part.models import Part
+
+        overwrite = self.get_setting("OVERWRITE_EXISTING")
+        qs = Part.objects.all() if overwrite else Part.objects.filter(link="")
+
+        if self.get_setting("SALEABLE_ONLY"):
+            qs = qs.filter(salable=True)
+
+        updated = 0
+        for part in qs:
+            part.link = self._build_link(part)
+            part.save()
+            updated += 1
+
+        return HttpResponse(
+            f"Backfill complete: updated {updated} part(s). "
+            f"<a href='/web/settings/admin/plugin/producturl/'>Back to plugin settings</a>"
+        )
+
+    def setup_urls(self):
+        return [
+            path("backfill/", self.backfill_view, name="backfill"),
+        ]
