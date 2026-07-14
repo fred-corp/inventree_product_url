@@ -1,16 +1,17 @@
 import logging
 
 import requests
+from django.db.models.signals import post_save
 from django.http import HttpResponse
 from django.urls import path
 
 from plugin import InvenTreePlugin
-from plugin.mixins import EventMixin, SettingsMixin, UrlsMixin
+from plugin.mixins import SettingsMixin, UrlsMixin
 
 logger = logging.getLogger("inventree")
 
 
-class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
+class ProductUrlPlugin(SettingsMixin, UrlsMixin, InvenTreePlugin):
     """Auto-populates a Part's external link with a public product URL,
     optionally creating a matching redirect in Shlink."""
 
@@ -18,7 +19,7 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
     SLUG = "producturl"
     TITLE = "Product URL Generator"
     DESCRIPTION = "Automatically generates a public product page URL for parts"
-    VERSION = "0.3.0"
+    VERSION = "0.3.1"
     AUTHOR = "Fred Corp."
 
     SETTINGS = {
@@ -63,7 +64,7 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
         },
         "SHLINK_API_URL": {
             "name": "Shlink API URL",
-            "description": "Base URL of your Shlink instance (e.g. https://your.domain.com/)",
+            "description": "Base URL of your Shlink instance (e.g. https://product.fredcorp.cc)",
             "default": "",
         },
         "SHLINK_API_KEY": {
@@ -94,7 +95,6 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
         return str(part.pk).zfill(padding)
 
     def _is_own_generated_link(self, part):
-        """Return True if part.link is already one of our own generated short URLs."""
         base_url = self.get_setting("BASE_URL")
         return bool(part.link) and part.link.startswith(base_url)
 
@@ -113,11 +113,7 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
             response = requests.post(
                 f"{api_url}/rest/v3/short-urls",
                 headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
-                json={
-                    "customSlug": slug,
-                    "longUrl": long_url,
-                    "findIfExists": True,
-                },
+                json={"customSlug": slug, "longUrl": long_url, "findIfExists": True},
                 timeout=10,
             )
             response.raise_for_status()
@@ -133,8 +129,6 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
 
         if self.get_setting("SHLINK_ENABLED"):
             existing_link = part.link
-            # Only treat an existing link as the intended redirect target if
-            # it isn't already one of our own previously-generated short URLs
             if existing_link and not existing_link.startswith(base_url):
                 long_url = existing_link
             else:
@@ -144,22 +138,12 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
         part.link = short_url
         part.save()
 
-    # --- event hook (new parts) ---
-
-    def process_event(self, event, *args, **kwargs):
-        if event != "part_part.created":
-            return
-
-        from part.models import Part
-
-        part = Part.objects.get(pk=kwargs["id"])
-
+    def handle_part_created(self, part):
+        """Entry point called from the post_save signal below."""
         if not self._should_process(part):
             return
-
         if self._is_own_generated_link(part) and not self.get_setting("OVERWRITE_EXISTING"):
             return
-
         self._generate_and_assign(part)
 
     # --- backfill endpoint (existing parts) ---
@@ -189,6 +173,30 @@ class ProductUrlPlugin(EventMixin, SettingsMixin, UrlsMixin, InvenTreePlugin):
         )
 
     def setup_urls(self):
-        return [
-            path("backfill/", self.backfill_view, name="backfill"),
-        ]
+        return [path("backfill/", self.backfill_view, name="backfill")]
+
+
+# --- Django signal wiring ---
+# InvenTree's EventMixin has no corresponding event for Part creation in this
+# version (part/events.py defines no members), so we hook Django's own
+# post_save signal directly instead. Using a string sender avoids importing
+# the Part model at module-import time, which can happen before all Django
+# apps are ready.
+
+def _on_part_post_save(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    from plugin.registry import registry
+
+    plugin = registry.get_plugin("producturl")
+    if plugin and plugin.is_active():
+        plugin.handle_part_created(instance)
+
+
+post_save.connect(
+    _on_part_post_save,
+    sender="part.Part",
+    dispatch_uid="inventree_product_url_part_created",
+    weak=False,
+)

@@ -2,6 +2,17 @@
 
 All notable changes to this plugin are documented in this file.
 
+## [0.3.1]
+
+### Fixed
+
+- **Root cause found:** `EventMixin` never worked because InvenTree's `part/events.py` defines no event members for this installed version — no `part.created`-style event is ever fired for Part creation. The plugin now hooks Django's `post_save` signal for the `Part` model directly instead, which is unaffected by this gap and doesn't depend on the "Enable event integration" global setting.
+
+### Changed
+
+- Removed `EventMixin` dependency entirely.
+- Note: the Shlink API call (when enabled) now runs synchronously as part of the part-creation request/response cycle, rather than being dispatched to the background worker.
+
 ## [0.3.0]
 
 ### Added
