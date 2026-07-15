@@ -4,6 +4,7 @@ import requests
 from django.db.models.signals import post_save
 from django.http import HttpResponse
 from django.urls import path
+from django.core.exceptions import ValidationError
 
 from plugin import InvenTreePlugin
 from plugin.mixins import SettingsMixin, UrlsMixin
@@ -19,7 +20,7 @@ class ProductUrlPlugin(SettingsMixin, UrlsMixin, InvenTreePlugin):
     SLUG = "producturl"
     TITLE = "Product URL Generator"
     DESCRIPTION = "Automatically generates a public product page URL for parts"
-    VERSION = "0.3.1"
+    VERSION = "0.4.0"
     AUTHOR = "Fred Corp."
 
     SETTINGS = {
@@ -53,6 +54,12 @@ class ProductUrlPlugin(SettingsMixin, UrlsMixin, InvenTreePlugin):
         "SALEABLE_ONLY": {
             "name": "Saleable Parts Only",
             "description": "Only generate product URLs for parts marked as saleable",
+            "validator": bool,
+            "default": False,
+        },
+        "SET_AS_BARCODE": {
+            "name": "Set URL as Barcode",
+            "description": "Set the generated product URL as the part's barcode",
             "validator": bool,
             "default": False,
         },
@@ -136,6 +143,15 @@ class ProductUrlPlugin(SettingsMixin, UrlsMixin, InvenTreePlugin):
             self._create_shlink_redirect(identifier, long_url)
 
         part.link = short_url
+
+        if self.get_setting("SET_AS_BARCODE") and part.barcode_data != short_url:
+            try:
+                part.assign_barcode(barcode_data=short_url, save=False)
+            except ValidationError as e:
+                logger.warning(
+                    f"ProductUrlPlugin: could not assign barcode for part {part.pk}: {e}"
+                )
+
         part.save()
 
     def handle_part_created(self, part):

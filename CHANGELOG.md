@@ -2,6 +2,13 @@
 
 All notable changes to this plugin are documented in this file.
 
+## [0.4.0]
+
+### Added
+
+- New `SET_AS_BARCODE` setting: when enabled, the generated product URL is also assigned as the part's barcode (using InvenTree's built-in `assign_barcode()`, which correctly computes and stores `barcode_hash` alongside `barcode_data`) in addition to being stored in the `link` field. Disabled by default.
+- Duplicate-barcode assignments are caught and logged as a warning rather than crashing part creation.
+
 ## [0.3.1]
 
 ### Fixed
